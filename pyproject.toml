@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "zametki-tg"
+version = "0.1.0"
+description = ""
+authors = ["diglander <denisovchinn2094@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.128.0"
+uvicorn = "^0.40.0"
+pydantic = "^2.12.5"
+sqlalchemy = "^2.0.45"
+syncpg = "^1.1.3"
+
+
+[tool.poetry.group.dev.dependencies]
+jupyter = "^1.1.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
