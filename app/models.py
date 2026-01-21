@@ -3,8 +3,8 @@ from sqlalchemy import func, String, Text, DateTime
 from datetime import datetime
 from .database import Base
 
-class Note(Base):
-    __tablename__ = 'notes'
+class Zametka(Base):
+    __tablename__ = 'zametki'
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     text: Mapped[str] = mapped_column(Text)
