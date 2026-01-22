@@ -1,8 +1,6 @@
 
 ```markdown
 # ZametkiTG
-<img width="850" height="379" alt="image" src="https://github.com/user-attachments/assets/0aa0b2a9-8fe2-4a2c-b02f-8a9b26edd9cd" />
-
 
 Система реализует работу с заметками и тэгизацию через ИИ:
 1.  FastAPI принимает заметку и мгновенно сохраняет её в PostgreSQL.
@@ -25,6 +23,7 @@ AI_BASE_URL=https://api.groq.com/openai/v1
 AI_MODEL=llama-3.3-70b-versatile
 
 ```
+<img width="850" height="379" alt="image" src="https://github.com/user-attachments/assets/b00aeb67-13ea-48f2-9355-c413147fc9e0" />
 
 ### 2. Запуск
 
