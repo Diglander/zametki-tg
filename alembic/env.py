@@ -11,9 +11,9 @@ load_dotenv()
 sys.path.insert(0, dirname(dirname(abspath(__file__))))
 
 from app.database import Base
-from app.models import Zametka # чтобы видел таблицу
+from app.models import Zametka  # чтобы видел таблицу
 
-target_metadata = Base.metadata # установка слежки
+target_metadata = Base.metadata  # установка слежки
 # для автогенерации версий(конец)
 import asyncio
 from logging.config import fileConfig
@@ -30,8 +30,8 @@ config = context.config
 
 # Берём URL базы из переменной окружения
 config.set_main_option(
-    "sqlalchemy.url",
-    os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/zametki_db")
+    'sqlalchemy.url',
+    os.getenv('DATABASE_URL', 'postgresql+asyncpg://postgres:postgres@localhost:5432/zametki_db'),
 )
 
 
@@ -63,12 +63,12 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = config.get_main_option('sqlalchemy.url')
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
+        dialect_opts={'paramstyle': 'named'},
     )
 
     with context.begin_transaction():
@@ -90,7 +90,7 @@ async def run_async_migrations() -> None:
 
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+        prefix='sqlalchemy.',
         poolclass=pool.NullPool,
     )
 
