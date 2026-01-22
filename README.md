@@ -23,8 +23,6 @@ AI_BASE_URL=https://api.groq.com/openai/v1
 AI_MODEL=llama-3.3-70b-versatile
 
 ```
-<img width="850" height="379" alt="image" src="https://github.com/user-attachments/assets/b00aeb67-13ea-48f2-9355-c413147fc9e0" />
-
 ### 2. Запуск
 
 ```bash
@@ -38,3 +36,4 @@ docker compose up --build
 Сервис использует API (Groq), ограниченное для российских IP (VPN)
 
 ```
+<img width="850" height="379" alt="image" src="https://github.com/user-attachments/assets/d0727a72-d6f8-4c8b-9446-06bfb8a0aaf5" />
