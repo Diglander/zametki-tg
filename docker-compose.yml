@@ -6,9 +6,9 @@ services:
       - "8000:8000"
     depends_on:
       db:
-        condition: service_healthy  # <--- Ждем готовности базы
+        condition: service_healthy  
       redis:
-        condition: service_healthy  # <--- Ждем готовности редиса
+        condition: service_healthy
     env_file:
       - .env
     volumes:
@@ -22,17 +22,17 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    healthcheck:  # <--- Проверка жизни Postgres
+    healthcheck:  
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   redis:
-    image: redis:7  # Версии 8.4 пока нет, лучше использовать 7 (stable) или alpine
+    image: redis:8.4
     ports:
       - "6379:6379"
-    healthcheck:  # <--- Проверка жизни Redis
+    healthcheck:  
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
