@@ -5,8 +5,10 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy  # <--- Ждем готовности базы
+      redis:
+        condition: service_healthy  # <--- Ждем готовности редиса
     env_file:
       - .env
     volumes:
@@ -20,18 +22,30 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:  # <--- Проверка жизни Postgres
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
-    image: redis:8.4
+    image: redis:7  # Версии 8.4 пока нет, лучше использовать 7 (stable) или alpine
     ports:
       - "6379:6379"
+    healthcheck:  # <--- Проверка жизни Redis
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   worker:
     build: .
     command: celery -A app.celery_app:celery_app worker --loglevel=info
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - .env
     volumes:

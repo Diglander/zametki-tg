@@ -41,6 +41,7 @@ async def get_zametka(id: int, session: AsyncSession = Depends(get_session)) -> 
 async def update_zametka(
     id: int, update_zametka: ZametkaUpdate, session: AsyncSession = Depends(get_session)
 ) -> ZametkaOut:
+    need_ai = False
     zametka = await session.get(Zametka, id)
     if not zametka:
         raise HTTPException(status_code=404, detail='Заметка не найдена')
