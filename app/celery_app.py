@@ -1,5 +1,6 @@
 import os
 from celery import Celery
+from celery.schedules import crontab
 
 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 
@@ -12,3 +13,14 @@ celery_app.conf.update(
     timezone='UTC',
     enable_utc=True,
 )
+
+celery_app.conf.beat_schedule = {
+    'daily-morning-summary': {
+        'task': 'app.tasks.daily_summary',
+        'schedule': crontab(hour=7, minute=0),  # Каждое утро в 7:00 UTC
+    },
+    'check-reminders-every-minute': {
+        'task': 'app.tasks.check_reminders',
+        'schedule': 60.0,
+    },
+}

@@ -6,6 +6,8 @@ from typing import Self
 class ZametkaIn(BaseModel):
     title: str | None = Field(None, max_length=100, description='Название заметки (необязательно)')
     text: str = Field(min_length=1, description='Текст заметки')
+    tg_chat_id: int | None = None
+    remind_at: datetime | None = None
 
     @model_validator(mode='after')
     def fill_title(self) -> Self:
@@ -33,7 +35,13 @@ class ZametkaOut(BaseModel):
     id: int = Field(description='ID заметки из БД')
     title: str | None = Field(description='Название заметки')
     text: str = Field(description='Текст заметки')
+    structured_text: str | None = Field(None, description='Структурированный текст от ИИ')
+    has_conflict: bool = Field(description='Есть ли конфликт с другой заметкой')
+    conflict_with_id: int | None = Field(None, description='ID конфликтующей заметки')
     tag: str | None = Field(description='Тэг')
+    is_reminded: bool = Field(description='Отправлено ли напоминание')
+    remind_at: datetime | None = Field(None, description='Время напоминания')
+    tg_chat_id: int | None = Field(None, description='ID чата Telegram')
 
     created_at: datetime = Field(description='Время создания из БД')
     updated_at: datetime | None = Field(None, description='Время обновления')
@@ -44,3 +52,8 @@ class ZametkaOut(BaseModel):
 class ZametkaUpdate(BaseModel):
     title: str | None = Field(default=None, description='Название заметки')
     text: str | None = Field(default=None, description='Текст заметки')
+
+
+class ProcessRequest(BaseModel):
+    text: str = Field(description='Текст для умной обработки')
+    tg_chat_id: int | None = Field(None, description='ID чата Telegram')
