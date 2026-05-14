@@ -36,12 +36,28 @@ async def start_cmd(message: types.Message):
     )
     await message.answer(greeting)
 
-async def process_text_via_api(message: types.Message, text: str):
+async def process_text_via_api(message: types.Message, text: str, edit_message: types.Message = None):
+    text_clean = text.strip() if text else ""
+    if not text_clean or len(text_clean) < 2:
+        msg_text = "⚠️ Текст слишком короткий или пустой."
+        if edit_message:
+            await edit_message.edit_text(f"🎤 {text_clean}\n\n{msg_text}")
+        else:
+            await message.answer(msg_text)
+        return
+
     # Показываем статус "Печатает..." пока ждём ответа от FastAPI / ИИ
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    
+    async def respond(response_text: str):
+        if edit_message:
+            await edit_message.edit_text(f"🎤 {text_clean}\n\n{response_text}")
+        else:
+            await message.answer(response_text)
+
     async with aiohttp.ClientSession() as session:
         try:
-            payload = {"text": text, "tg_chat_id": message.chat.id}
+            payload = {"text": text_clean, "tg_chat_id": message.chat.id}
             async with session.post(PROCESS_URL, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -56,10 +72,10 @@ async def process_text_via_api(message: types.Message, text: str):
                                 if r.get('created_at'):
                                     dt = datetime.fromisoformat(r['created_at'])
                                     dt_str = f" 🕒 {dt.astimezone(MSK).strftime('%d.%m.%Y %H:%M')}"
-                                msg += f"- {r.get('structured_text') or r['text']}{dt_str}\n\n"
-                            await message.answer(msg)
+                                msg += f"• {r.get('structured_text') or r['text']}{dt_str}\n"
+                            await respond(msg.strip())
                         else:
-                            await message.answer("🤷‍♂️ Ничего не найдено.")
+                            await respond("🤷‍♂️ Ничего не найдено.")
                     elif intent == "LIST_ALL":
                         results = data.get("results", [])
                         if results:
@@ -69,12 +85,12 @@ async def process_text_via_api(message: types.Message, text: str):
                                 if r.get('created_at'):
                                     dt = datetime.fromisoformat(r['created_at'])
                                     dt_str = f" 🕒 {dt.astimezone(MSK).strftime('%d.%m.%Y %H:%M')}"
-                                msg += f"- {r.get('structured_text') or r['text']}{dt_str}\n\n"
-                            await message.answer(msg)
+                                msg += f"• {r.get('structured_text') or r['text']}{dt_str}\n"
+                            await respond(msg.strip())
                         else:
-                            await message.answer("🤷‍♂️ У вас пока нет заметок.")
+                            await respond("🤷‍♂️ У вас пока нет заметок.")
                     elif intent == "LIST_TAGS":
-                        await message.answer("🏷 Доступные теги: РАБОТА, ОТДЫХ, УЧЕБА, ХОББИ, БЫТОВУХА, НАПОМИНАНИЕ, СПИСКИ, РАЗНОЕ")
+                        await respond("🏷 Доступные теги: РАБОТА, ОТДЫХ, УЧЕБА, ХОББИ, БЫТОВУХА, НАПОМИНАНИЕ, СПИСКИ, РАЗНОЕ")
                     elif intent == "LIST_REMINDERS":
                         results = data.get("results", [])
                         if results:
@@ -82,39 +98,43 @@ async def process_text_via_api(message: types.Message, text: str):
                             for r in results:
                                 dt = datetime.fromisoformat(r['remind_at'])
                                 dt_str = dt.astimezone(MSK).strftime('%d.%m.%Y %H:%M:%S МСК')
-                                rec_str = f"\n🔄 Повтор: {r['recurrence']}" if r.get('recurrence') else ""
+                                rec_str = f" 🔄 Повтор: {r['recurrence']}" if r.get('recurrence') else ""
                                 rep_str = f" (осталось раз: {r['repetitions']})" if r.get('repetitions') else ""
-                                msg += f"📌 {r['text']}\nСработает: {dt_str}{rec_str}{rep_str}\n\n"
-                            await message.answer(msg)
+                                msg += f"📌 {r['text']}\n   Сработает: {dt_str}{rec_str}{rep_str}\n\n"
+                            await respond(msg.strip())
                         else:
-                            await message.answer("🤷‍♂️ У вас нет активных напоминаний.")
+                            await respond("🤷‍♂️ У вас нет активных напоминаний.")
                     elif intent == "REMINDER":
                         rec = f"\n🔄 Цикл: {data.get('recurrence')}" if data.get('recurrence') else ""
                         rep = f" ({data.get('repetitions')} раз)" if data.get('repetitions') else ""
+                        
+                        dt_str = ""
                         if data.get('remind_at'):
                             dt = datetime.fromisoformat(data['remind_at'])
                             dt_str = dt.astimezone(MSK).strftime('%d.%m %H:%M:%S МСК')
-                        else: dt_str = ""
-                        await message.answer(f"⏰ Напоминание установлено на {dt_str}!{rec}{rep}\nТекст: {data.get('note', {}).get('text')}")
+                        
+                        base_msg = f"⏰ Напоминание установлено на {dt_str}!" if dt_str else "⏰ Напоминание установлено!"
+                        note_text = data.get('note', {}).get('text', '')
+                        await respond(f"{base_msg}{rec}{rep}\nТекст: {note_text}".strip())
                     elif intent == "DELETE":
                         if data.get("success"):
                             texts = data.get("deleted_texts", [])
                             # Для обратной совместимости, если вдруг вернется старый формат
                             if not texts and data.get("deleted_text"):
                                 texts = [data.get("deleted_text")]
-                            texts_str = "\n\n".join([f"- {t}" for t in texts])
-                            header = "Заметка удалена" if len(texts) == 1 else f"Удалено записей: {len(texts)}"
-                            await message.answer(f"🗑 {header}. Оригиналы:\n\n{texts_str}")
+                            texts_str = "\n".join([f"• {t}" for t in texts])
+                            header = "Заметка удалена. Оригинал:" if len(texts) == 1 else f"Удалено записей: {len(texts)}. Оригиналы:"
+                            await respond(f"🗑 {header}\n\n{texts_str}")
                         else:
-                            await message.answer("🤷‍♂️ Не нашел подходящую заметку для удаления.")
+                            await respond("🤷‍♂️ Не нашел подходящую заметку для удаления.")
                     elif intent == "DELETE_ALL":
-                        await message.answer("🧨 Все ваши заметки были успешно удалены!")
+                        await respond("🧨 Все ваши заметки были успешно удалены!")
                     else:
-                        await message.answer("✅ Заметка сохранена!")
+                        await respond("✅ Заметка сохранена!")
                 else:
-                    await message.answer(f"❌ Ошибка сервера: {resp.status}")
+                    await respond(f"❌ Ошибка сервера: {resp.status}")
         except Exception as e:
-            await message.answer(f"❌ Ошибка соединения с API: {e}")
+            await respond(f"❌ Ошибка соединения с API: {e}")
 
 @dp.message(lambda msg: msg.voice is not None)
 async def handle_voice(message: types.Message):
@@ -128,12 +148,12 @@ async def handle_voice(message: types.Message):
         
         with open(temp_filename, "rb") as audio_file:
             transcription = await aclient.audio.transcriptions.create(
-                model="whisper-large-v3", # Модель Groq для аудио
+                model=os.getenv("AUDIO_MODEL", "whisper-large-v3"),
                 file=audio_file
             )
         recognized_text = transcription.text
-        await message.answer(f"🎤 Распознано: {recognized_text}\n\nОбрабатываю...")
-        await process_text_via_api(message, recognized_text)
+        processing_msg = await message.answer(f"🎤 Распознано: {recognized_text}\n\n⏳ Обрабатываю...")
+        await process_text_via_api(message, recognized_text, edit_message=processing_msg)
     except Exception as e:
         await message.answer(f"❌ Ошибка аудио: {e}")
     finally:

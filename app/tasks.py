@@ -107,8 +107,8 @@ def generate_ai_tag_and_embedding(zametka_id: int, text: str):
                     if "ДА" in conflict_resp.choices[0].message.content.strip().upper():
                         conflict_found = True
                         conflict_id = closest.id
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Ошибка проверки конфликта AI: {e}")
 
         zametka = session.get(Zametka, zametka_id)
         if zametka:
@@ -126,8 +126,10 @@ def generate_ai_tag_and_embedding(zametka_id: int, text: str):
                     msg = urllib.parse.quote(f"⚠️ Конфликт версий!\nВаша заметка противоречит заметке #{conflict_id}. Зайдите в Web-интерфейс для проверки.")
                     url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={zametka.tg_chat_id}&text={msg}"
                     req = urllib.request.Request(url)
-                    try: urllib.request.urlopen(req, timeout=10)
-                    except: pass
+                    try: 
+                        urllib.request.urlopen(req, timeout=10)
+                    except Exception as e: 
+                        logger.error(f"Не удалось отправить уведомление о конфликте: {e}")
 
 
 @celery_app.task
@@ -138,7 +140,7 @@ def daily_summary():
     from datetime import datetime, timedelta
     from sqlalchemy import select
     
-    yesterday = datetime.utcnow() - timedelta(days=1)
+    yesterday = datetime.now(UTC) - timedelta(days=1)
     with sync_session_maker() as session:
         # Находим всех уникальных пользователей, которые создавали заметки за 24ч
         users_query = select(Zametka.tg_chat_id).where(

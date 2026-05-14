@@ -46,25 +46,27 @@ async def process_text(
     now_msk = datetime.now(UTC) + timedelta(hours=3)
     prompt = f"""Ты — умный AI-ассистент. Текущее время: {now_msk.strftime('%Y-%m-%d %H:%M:%S')}.
 Категории СТРОГО разделены:
-- SEARCH: ТОЛЬКО поиск конкретных заметок ("покажи про спорт", "найди рецепт").
+- SEARCH: ТОЛЬКО поиск конкретных заметок ("покажи про спорт", "найди рецепт", "покажи все списки" -> query: "списки").
 - LIST_ALL: ТОЛЬКО показ ВСЕХ заметок ("покажи все заметки", "выведи все").
 - DELETE: ТОЛЬКО удаление конкретной заметки или напоминания ("удали заметку про...", "отмени таймер").
 - DELETE_ALL: ТОЛЬКО удаление ВСЕХ заметок ("удали все заметки", "очисти базу").
 - LIST_REMINDERS: показать таймеры ("какие есть таймеры").
 - LIST_TAGS: показать теги.
 - REMINDER: создать напоминание ("напомни...").
-- NOTE: просто сохранить текст, если не просят показать или удалить.
+- UNKNOWN_COMMAND: если пользователь произносит что-то похожее на команду боту (поиск, намерения, "покажи функции", "что ты умеешь", "сделай", "помоги"), но это не подходит ни под один интент выше. НЕ сохраняй непонятные команды как NOTE!
+- NOTE: просто сохранить текст, если это реальная заметка, а не команда боту.
 
 Ответь строго в JSON без маркдауна (только объект {{...}}):
 {{
-    "intent": "SEARCH" | "LIST_ALL" | "REMINDER" | "LIST_REMINDERS" | "LIST_TAGS" | "DELETE" | "DELETE_ALL" | "NOTE",
+    "intent": "SEARCH" | "LIST_ALL" | "REMINDER" | "LIST_REMINDERS" | "LIST_TAGS" | "DELETE" | "DELETE_ALL" | "UNKNOWN_COMMAND" | "NOTE",
     "query": "СУТЬ того, что нужно найти или удалить (например, 'купить хлеб' вместо 'удали таймер про хлеб')",
     "is_reminder": "укажи true (boolean) если просят удалить/найти именно напоминание или таймер, иначе false",
     "delete_multiple": "укажи true (boolean) если просят удалить СРАЗУ НЕСКОЛЬКО или ВСЕ заметки по одной теме (например 'удали все про банан'), иначе false",
-    "remind_at": "ISO 8601 время (только если REMINDER)",
+    "remind_at": "ISO 8601 время (ТОЛЬКО если указано точное время или дата, например 'завтра в 15:00', '15 мая')",
+    "offset_str": "ЕСЛИ время задано ОТНОСИТЕЛЬНО (например 'через полтора часа', 'через 2 недели 3 дня 6 часов 15 минут и 20 секунд'), переведи его в строку вида '1w 2d 3h 15m 20s'. Для 'через полтора часа' -> '1h 30m', для 'через минуту' -> '1m'. Иначе null.",
     "recurrence": "интервал. ОБЯЗАТЕЛЬНО заполни, если просят цикл или 'через X N раз' (например, 'через 10 секунд' -> '10s'). Форматы: '10s', '5m', '3h', '1d', '1w' ИЛИ '0,2,4' (дни недели). Иначе null",
     "repetitions": "число повторений (например, 3), если указано, иначе null",
-    "text": "исходный текст БЕЗ отсебятины. ЗАПРЕЩЕНО писать сочинения или додумывать факты. Сохрани оригинальный смысл и объем."
+    "text": "СУТЬ заметки или напоминания БЕЗ слов-команд (например: 'напомни через 20 минут купить хлеб' -> 'купить хлеб', 'добавь заметку про спорт' -> 'спорт'). ЗАПРЕЩЕНО додумывать факты и писать отсебятину."
 }}"""
     try:
         response = await aclient.chat.completions.create(
@@ -162,9 +164,29 @@ async def process_text(
         await session.commit()
         return {"intent": "DELETE_ALL", "success": True}
 
+    if intent == "UNKNOWN_COMMAND":
+        return {"intent": "UNKNOWN_COMMAND"}
+
     remind_at = None
     if intent == "REMINDER":
-        if parsed.get("remind_at"):
+        offset_str = parsed.get("offset_str")
+        if offset_str:
+            try:
+                remind_at = datetime.now(UTC)
+                matches = re.finditer(r'(\d+)\s*([wdhms])', offset_str)
+                found = False
+                for m in matches:
+                    found = True
+                    v, u = int(m.group(1)), m.group(2)
+                    d = timedelta(weeks=v) if u=='w' else timedelta(days=v) if u=='d' else timedelta(hours=v) if u=='h' else timedelta(minutes=v) if u=='m' else timedelta(seconds=v)
+                    remind_at += d
+                if not found:
+                    remind_at = None
+            except Exception as e:
+                logger.warning(f"Failed to parse offset_str: {offset_str}. Error: {e}")
+                remind_at = None
+
+        if not remind_at and parsed.get("remind_at"):
             try:
                 # ИИ выдает время по Москве. Очищаем строку от таймзон, чтобы получить просто дату/время.
                 remind_str = parsed["remind_at"]
