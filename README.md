@@ -1,3 +1,4 @@
+docker-compose exec backend alembic upgrade head
 ## ZametkiTG
 
 Система реализует работу с заметками и тэгизацию через ИИ:
@@ -15,10 +16,15 @@ POSTGRES_PASSWORD=postgres
 POSTGRES_DB=zametki_db
 
 REDIS_URL=redis://redis:6379/0
+BOT_TOKEN=твой_токен_от_botfather
 
 AI_API_KEY=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
 AI_BASE_URL=https://api.groq.com/openai/v1
 AI_MODEL=llama-3.3-70b-versatile
+
+OPENAI_API_KEY=ghp_твой_токен_от_github
+OPENAI_BASE_URL=https://models.inference.ai.azure.com
+EMBEDDING_MODEL=text-embedding-3-small
 
 ```
 ### 2. Запуск

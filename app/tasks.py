@@ -2,8 +2,9 @@ import os
 import urllib.request
 import urllib.parse
 import logging
+import re
 from openai import OpenAI
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 from .celery_app import celery_app
 from dotenv import load_dotenv
 
@@ -15,6 +16,8 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 client = OpenAI(api_key=os.getenv('AI_API_KEY'), base_url=os.getenv('AI_BASE_URL'))
+# Отдельный клиент для векторов (OpenAI)
+emb_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'), base_url=os.getenv('OPENAI_BASE_URL'))
 
 TAGS = ['РАБОТА', 'ОТДЫХ', 'УЧЕБА', 'ХОББИ', 'БЫТОВУХА', 'НАПОМИНАНИЕ', 'СПИСКИ', 'РАЗНОЕ']
 
@@ -74,9 +77,9 @@ def generate_ai_tag_and_embedding(zametka_id: int, text: str):
 
     # Генерируем вектор текста
     try:
-        emb_response = client.embeddings.create(
+        emb_response = emb_client.embeddings.create(
             input=structured_text,
-            model="text-embedding-3-small"
+            model=os.getenv('EMBEDDING_MODEL', 'BAAI/bge-m3')
         )
         generated_embedding = emb_response.data[0].embedding
     except Exception as e:
@@ -185,7 +188,30 @@ def check_reminders():
             req = urllib.request.Request(url)
             try:
                 urllib.request.urlopen(req, timeout=10)
-                reminder.is_reminded = True
+                if reminder.recurrence:
+                    if reminder.repetitions is not None:
+                        reminder.repetitions -= 1
+                        if reminder.repetitions <= 0:
+                            reminder.is_reminded = True
+                    if not reminder.is_reminded:
+                        match = re.match(r'^(\d+)([smhdw])$', reminder.recurrence)
+                        if match:
+                            v, u = int(match.group(1)), match.group(2)
+                            d = timedelta(seconds=v) if u=='s' else timedelta(minutes=v) if u=='m' else timedelta(hours=v) if u=='h' else timedelta(days=v) if u=='d' else timedelta(weeks=v)
+                            reminder.remind_at += d
+                        elif ',' in reminder.recurrence or reminder.recurrence.isdigit():
+                            days = [int(x) for x in reminder.recurrence.split(',') if x.isdigit()]
+                            if days:
+                                nxt = reminder.remind_at + timedelta(days=1)
+                                while nxt.weekday() not in days: nxt += timedelta(days=1)
+                                reminder.remind_at = nxt
+                            else: reminder.is_reminded = True
+                        else: reminder.is_reminded = True
+                else:
+                    reminder.is_reminded = True
+
+                if reminder.is_reminded:
+                    session.delete(reminder)
             except Exception as e:
                 logger.error(f"Failed to send reminder {reminder.id}: {e}")
         if reminders: session.commit()

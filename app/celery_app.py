@@ -21,6 +21,6 @@ celery_app.conf.beat_schedule = {
     },
     'check-reminders-every-minute': {
         'task': 'app.tasks.check_reminders',
-        'schedule': 60.0,
+        'schedule': 3.0,  # Каждые 3 секунды для тестов, в проде можно поставить crontab(minute='*/1') для проверки каждую минуту
     },
 }

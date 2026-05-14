@@ -2,10 +2,10 @@ import os
 import json
 import re
 import logging
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from openai import AsyncOpenAI
 
 from ..schemas import ZametkaOut, ZametkaIn, ZametkaUpdate, ProcessRequest
@@ -16,6 +16,8 @@ from ..tasks import generate_ai_tag_and_embedding
 router = APIRouter()
 
 aclient = AsyncOpenAI(api_key=os.getenv('AI_API_KEY'), base_url=os.getenv('AI_BASE_URL'))
+# Отдельный клиент для эмбеддингов (OpenAI)
+emb_client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'), base_url=os.getenv('OPENAI_BASE_URL'))
 
 logger = logging.getLogger(__name__)
 
@@ -41,19 +43,26 @@ async def create_zametka(
 async def process_text(
     req: ProcessRequest, session: AsyncSession = Depends(get_session)
 ):
-    now_iso = datetime.now(UTC).isoformat()
-    prompt = f"""Ты — умный AI-ассистент. Текущее время (UTC): {now_iso}.
-Определи намерение пользователя из текста.
-Категории:
-- SEARCH: поиск по заметкам (команды типа "найди", "покажи", "есть ли")
-- REMINDER: создать напоминание с привязкой ко времени ("напомни", "через N дней/часов")
-- NOTE: обычная заметка (сохранить факт, мысль, список)
+    now_msk = datetime.now(UTC) + timedelta(hours=3)
+    prompt = f"""Ты — умный AI-ассистент. Текущее время: {now_msk.strftime('%Y-%m-%d %H:%M:%S')}.
+Категории СТРОГО разделены:
+- SEARCH: ТОЛЬКО поиск конкретных заметок ("покажи про спорт", "найди рецепт").
+- LIST_ALL: ТОЛЬКО показ ВСЕХ заметок ("покажи все заметки", "выведи все").
+- DELETE: ТОЛЬКО удаление конкретной заметки или напоминания ("удали заметку про...", "отмени таймер").
+- DELETE_ALL: ТОЛЬКО удаление ВСЕХ заметок ("удали все заметки", "очисти базу").
+- LIST_REMINDERS: показать таймеры ("какие есть таймеры").
+- LIST_TAGS: показать теги.
+- REMINDER: создать напоминание ("напомни...").
+- NOTE: просто сохранить текст, если не просят показать или удалить.
 
 Ответь строго в JSON без маркдауна (только объект {{...}}):
 {{
-    "intent": "SEARCH" | "REMINDER" | "NOTE",
-    "query": "смысловой текст для поиска (только если SEARCH)",
-    "remind_at": "ISO 8601 время UTC (только если REMINDER)",
+    "intent": "SEARCH" | "LIST_ALL" | "REMINDER" | "LIST_REMINDERS" | "LIST_TAGS" | "DELETE" | "DELETE_ALL" | "NOTE",
+    "query": "СУТЬ того, что нужно найти или удалить (например, 'купить хлеб' вместо 'удали таймер про хлеб')",
+    "is_reminder": "укажи true (boolean) если просят удалить/найти именно напоминание или таймер, иначе false",
+    "remind_at": "ISO 8601 время (только если REMINDER)",
+    "recurrence": "интервал. ОБЯЗАТЕЛЬНО заполни, если просят цикл или 'через X N раз' (например, 'через 10 секунд' -> '10s'). Форматы: '10s', '5m', '3h', '1d', '1w' ИЛИ '0,2,4' (дни недели). Иначе null",
+    "repetitions": "число повторений (например, 3), если указано, иначе null",
     "text": "очищенный текст для сохранения (для NOTE или REMINDER, без слова 'напомни')"
 }}"""
     try:
@@ -80,29 +89,104 @@ async def process_text(
         intent = "NOTE"
         parsed = {"text": req.text}
 
+    if intent == "LIST_TAGS":
+        return {"intent": "LIST_TAGS"}
+
     if intent == "SEARCH":
         q = parsed.get("query", req.text)
-        emb_resp = await aclient.embeddings.create(input=q, model="text-embedding-3-small")
+        emb_resp = await emb_client.embeddings.create(input=q, model=os.getenv('EMBEDDING_MODEL', 'BAAI/bge-m3'))
         q_emb = emb_resp.data[0].embedding
-        query = select(Zametka).order_by(Zametka.embedding.l2_distance(q_emb)).limit(5)
+        query = select(Zametka).where(Zametka.tg_chat_id == req.tg_chat_id).order_by(Zametka.embedding.l2_distance(q_emb)).limit(5)
         res = await session.execute(query)
         return {"intent": "SEARCH", "results": [{"text": n.text, "structured_text": n.structured_text, "id": n.id} for n in res.scalars().all()]}
 
+    if intent == "LIST_ALL":
+        query = select(Zametka).where(Zametka.tg_chat_id == req.tg_chat_id).order_by(Zametka.created_at.desc()).limit(50)
+        res = await session.execute(query)
+        return {"intent": "LIST_ALL", "results": [{"text": n.text, "structured_text": n.structured_text, "id": n.id} for n in res.scalars().all()]}
+
+    if intent == "LIST_REMINDERS":
+        query = select(Zametka).where(
+            Zametka.remind_at.isnot(None),
+            Zametka.is_reminded == False,
+            Zametka.tg_chat_id == req.tg_chat_id
+        ).order_by(Zametka.remind_at.asc()).limit(10)
+        res = await session.execute(query)
+        reminders = res.scalars().all()
+        return {
+            "intent": "LIST_REMINDERS",
+            "results": [{"text": n.structured_text or n.text, "remind_at": n.remind_at.isoformat(), "recurrence": n.recurrence, "repetitions": n.repetitions} for n in reminders]
+        }
+
+    if intent == "DELETE":
+        q = parsed.get("query", req.text)
+        is_reminder = parsed.get("is_reminder")
+        if isinstance(is_reminder, str):
+            is_reminder = is_reminder.lower() == 'true'
+
+        stmt = select(Zametka).where(Zametka.tg_chat_id == req.tg_chat_id)
+        if is_reminder:
+            stmt = stmt.where(Zametka.remind_at.isnot(None))
+
+        # 1. Пытаемся сначала найти точное вхождение текста (идеально для коротких таймеров)
+        exact_query = stmt.where(Zametka.text.ilike(f"%{q}%")).order_by(Zametka.created_at.desc()).limit(1)
+        res = await session.execute(exact_query)
+        note_to_delete = res.scalars().first()
+
+        # 2. Если по точному тексту не нашли, ищем по смыслу (вектору)
+        if not note_to_delete:
+            emb_resp = await emb_client.embeddings.create(input=q, model=os.getenv('EMBEDDING_MODEL', 'BAAI/bge-m3'))
+            q_emb = emb_resp.data[0].embedding
+            vec_query = stmt.where(Zametka.embedding.isnot(None)).order_by(Zametka.embedding.l2_distance(q_emb)).limit(1)
+            res = await session.execute(vec_query)
+            note_to_delete = res.scalars().first()
+
+        if note_to_delete:
+            deleted_text = note_to_delete.text  # Строго возвращаем сырой оригинал
+            await session.delete(note_to_delete)
+            await session.commit()
+            return {"intent": "DELETE", "success": True, "deleted_text": deleted_text}
+        return {"intent": "DELETE", "success": False}
+
+    if intent == "DELETE_ALL":
+        query = delete(Zametka).where(Zametka.tg_chat_id == req.tg_chat_id)
+        await session.execute(query)
+        await session.commit()
+        return {"intent": "DELETE_ALL", "success": True}
+
     remind_at = None
-    if intent == "REMINDER" and parsed.get("remind_at"):
-        try:
-            remind_str = parsed["remind_at"].replace("Z", "+00:00")
-            # Фикс багов ISO форматов с/без микросекунд
-            if len(remind_str) > 0:
-                remind_at = datetime.fromisoformat(remind_str)
-                # Убедимся, что время в UTC
-                if remind_at.tzinfo is None:
-                    remind_at = remind_at.replace(tzinfo=UTC)
-        except Exception as e: 
-            logger.warning(f"Failed to parse remind_at date: {parsed['remind_at']}. Error: {e}")
+    if intent == "REMINDER":
+        if parsed.get("remind_at"):
+            try:
+                # ИИ выдает время по Москве. Очищаем строку от таймзон, чтобы получить просто дату/время.
+                remind_str = parsed["remind_at"]
+                if remind_str.endswith("Z"):
+                    remind_str = remind_str[:-1]
+                if "+" in remind_str:
+                    remind_str = remind_str.split("+")[0]
+                    
+                if len(remind_str) > 0:
+                    naive_dt = datetime.fromisoformat(remind_str)
+                    # Программно отнимаем 3 часа и сохраняем в UTC для базы данных
+                    remind_at = (naive_dt - timedelta(hours=3)).replace(tzinfo=UTC)
+            except Exception as e: 
+                logger.warning(f"Failed to parse remind_at date: {parsed['remind_at']}. Error: {e}")
+        
+        # Если ИИ не вернул remind_at, но вернул recurrence (например, "каждые 10 секунд")
+        recurrence_str = parsed.get("recurrence")
+        if not remind_at and recurrence_str:
+            match = re.match(r'^(\d+)([smhdw])$', recurrence_str)
+            if match:
+                v, u = int(match.group(1)), match.group(2)
+                d = timedelta(seconds=v) if u=='s' else timedelta(minutes=v) if u=='m' else timedelta(hours=v) if u=='h' else timedelta(days=v) if u=='d' else timedelta(weeks=v)
+                remind_at = datetime.now(UTC) + d
+            else:
+                remind_at = datetime.now(UTC)
 
     note_text = parsed.get("text", req.text)
-    new_zametka = Zametka(title=note_text[:50] + "...", text=note_text, tg_chat_id=req.tg_chat_id, remind_at=remind_at)
+    recurrence = parsed.get("recurrence")
+    repetitions = parsed.get("repetitions")
+    new_zametka = Zametka(title=note_text[:50] + "...", text=note_text, tg_chat_id=req.tg_chat_id, remind_at=remind_at, recurrence=recurrence, repetitions=repetitions)
     session.add(new_zametka)
     await session.commit()
     await session.refresh(new_zametka)
@@ -110,6 +194,8 @@ async def process_text(
 
     return {
         "intent": intent,
+        "recurrence": recurrence,
+        "repetitions": repetitions,
         "remind_at": remind_at.isoformat() if remind_at else None,
         "note": {"id": new_zametka.id, "text": new_zametka.text}
     }
@@ -117,9 +203,9 @@ async def process_text(
 @router.get('/search', response_model=list[ZametkaOut], description='Умный семантический поиск')
 async def search_zametki(q: str, session: AsyncSession = Depends(get_session)) -> list[ZametkaOut]:
     # 1. Делаем вектор из запроса
-    response = await aclient.embeddings.create(
+    response = await emb_client.embeddings.create(
         input=q,
-        model="text-embedding-3-small"
+        model=os.getenv('EMBEDDING_MODEL', 'BAAI/bge-m3')
     )
     query_embedding = response.data[0].embedding
 

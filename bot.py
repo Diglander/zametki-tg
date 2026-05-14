@@ -2,6 +2,7 @@ import asyncio
 import os
 import uuid
 import aiohttp
+from datetime import datetime, timezone, timedelta
 from openai import AsyncOpenAI
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
@@ -16,9 +17,25 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 aclient = AsyncOpenAI(api_key=os.getenv('AI_API_KEY'), base_url=os.getenv('AI_BASE_URL'))
 
+# Настраиваем Московское время (UTC+3)
+MSK = timezone(timedelta(hours=3), name="MSK")
+
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
-    await message.answer("Привет! Отправь мне текст или запиши голосовое. Я могу создавать заметки, искать по смыслу и ставить напоминания (например: 'напомни через 5 дней...').")
+    greeting = (
+        "Привет! Я твой умный AI-ассистент для заметок. Отправь мне текст или запиши голосовое сообщение.\n\n"
+        "Что я умею:\n"
+        "📝 Сохранять: просто напиши мысль, идею или факт.\n"
+        "🏷 Авто-теги: сам проставлю теги (РАБОТА, ОТДЫХ, УЧЕБА, ХОББИ, БЫТОВУХА, СПИСКИ и др.).\n"
+        "🔍 Искать по смыслу: 'покажи про спорт' или 'найди рецепт'.\n"
+        "📚 Показывать всё: 'покажи все заметки'.\n"
+        "⏰ Ставить таймеры: 'напомни завтра в 15:00 купить хлеб'.\n"
+        "🔄 Повторять: 'напоминай пить воду каждые 3 часа' или 'потянуться через 10 секунд 3 раза'.\n"
+        "📋 Показывать таймеры: 'какие есть таймеры'.\n"
+        "🗑 Удалять: 'удали заметку про...' или 'удали все заметки'.\n\n"
+        "Просто общайся со мной как с живым человеком!"
+    )
+    await message.answer(greeting)
 
 async def process_text_via_api(message: types.Message, text: str):
     # Показываем статус "Печатает..." пока ждём ответа от FastAPI / ИИ
@@ -35,12 +52,58 @@ async def process_text_via_api(message: types.Message, text: str):
                         results = data.get("results", [])
                         if results:
                             msg = "🔍 Найдено по вашему запросу:\n\n"
-                            for r in results: msg += f"- {r.get('structured_text') or r['text']}\n\n"
+                            for r in results:
+                                dt_str = ""
+                                if r.get('created_at'):
+                                    dt = datetime.fromisoformat(r['created_at'])
+                                    dt_str = f" 🕒 {dt.astimezone(MSK).strftime('%d.%m.%Y %H:%M')}"
+                                msg += f"- {r.get('structured_text') or r['text']}{dt_str}\n\n"
                             await message.answer(msg)
                         else:
                             await message.answer("🤷‍♂️ Ничего не найдено.")
+                    elif intent == "LIST_ALL":
+                        results = data.get("results", [])
+                        if results:
+                            msg = "📚 Все ваши заметки:\n\n"
+                            for r in results:
+                                dt_str = ""
+                                if r.get('created_at'):
+                                    dt = datetime.fromisoformat(r['created_at'])
+                                    dt_str = f" 🕒 {dt.astimezone(MSK).strftime('%d.%m.%Y %H:%M')}"
+                                msg += f"- {r.get('structured_text') or r['text']}{dt_str}\n\n"
+                            await message.answer(msg)
+                        else:
+                            await message.answer("🤷‍♂️ У вас пока нет заметок.")
+                    elif intent == "LIST_TAGS":
+                        await message.answer("🏷 Доступные теги: РАБОТА, ОТДЫХ, УЧЕБА, ХОББИ, БЫТОВУХА, НАПОМИНАНИЕ, СПИСКИ, РАЗНОЕ")
+                    elif intent == "LIST_REMINDERS":
+                        results = data.get("results", [])
+                        if results:
+                            msg = "⏰ Ваши активные напоминания:\n\n"
+                            for r in results:
+                                dt = datetime.fromisoformat(r['remind_at'])
+                                dt_str = dt.astimezone(MSK).strftime('%d.%m.%Y %H:%M:%S МСК')
+                                rec_str = f"\n🔄 Повтор: {r['recurrence']}" if r.get('recurrence') else ""
+                                rep_str = f" (осталось раз: {r['repetitions']})" if r.get('repetitions') else ""
+                                msg += f"📌 {r['text']}\nСработает: {dt_str}{rec_str}{rep_str}\n\n"
+                            await message.answer(msg)
+                        else:
+                            await message.answer("🤷‍♂️ У вас нет активных напоминаний.")
                     elif intent == "REMINDER":
-                        await message.answer(f"⏰ Напоминание установлено!\nТекст: {data.get('note', {}).get('text')}")
+                        rec = f"\n🔄 Цикл: {data.get('recurrence')}" if data.get('recurrence') else ""
+                        rep = f" ({data.get('repetitions')} раз)" if data.get('repetitions') else ""
+                        if data.get('remind_at'):
+                            dt = datetime.fromisoformat(data['remind_at'])
+                            dt_str = dt.astimezone(MSK).strftime('%d.%m %H:%M:%S МСК')
+                        else: dt_str = ""
+                        await message.answer(f"⏰ Напоминание установлено на {dt_str}!{rec}{rep}\nТекст: {data.get('note', {}).get('text')}")
+                    elif intent == "DELETE":
+                        if data.get("success"):
+                            await message.answer(f"🗑 Заметка удалена. Оригинал:\n\n{data.get('deleted_text')}")
+                        else:
+                            await message.answer("🤷‍♂️ Не нашел подходящую заметку для удаления.")
+                    elif intent == "DELETE_ALL":
+                        await message.answer("🧨 Все ваши заметки были успешно удалены!")
                     else:
                         await message.answer("✅ Заметка сохранена!")
                 else:

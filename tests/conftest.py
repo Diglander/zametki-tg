@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 from app.app import app
 from app.database import get_session, Base
-from app.tasks import generate_ai_tag
+from app.tasks import generate_ai_tag_and_embedding
 
 TEST_DB_URL = 'sqlite+aiosqlite:///:memory:'
 engine = create_async_engine(TEST_DB_URL, echo=False)
@@ -23,7 +23,7 @@ async def init_db():
 @pytest.fixture(autouse=True) # autouse=True значит "применять ко всем тестам автоматически"
 def mock_celery():
     # Мы подменяем метод .delay на пустышку
-    generate_ai_tag.delay = MagicMock(return_value=None)
+    generate_ai_tag_and_embedding.delay = MagicMock(return_value=None)
     yield
 
 @pytest_asyncio.fixture(scope='function')

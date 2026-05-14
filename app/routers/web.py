@@ -111,4 +111,3 @@ async def get_web_interface():
 </body>
 </html>"""
     return html
-    return html
