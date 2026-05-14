@@ -32,8 +32,11 @@ def generate_ai_tag_and_embedding(zametka_id: int, text: str):
     try:
         struct_resp = client.chat.completions.create(
             model=os.getenv('AI_MODEL'),
-            messages=[{"role": "system", "content": "Ты редактор. Исправь синтаксис, грамматику и структурируй текст. НЕ добавляй факты."}, {"role": "user", "content": text}],
-            temperature=0.1
+            messages=[
+                {"role": "system", "content": "Ты редактор. Исправь только явные опечатки. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО додумывать факты, генерировать рассказы, стихи или добавлять информацию. Оставь исходный смысл и объем. Если тебе прислали одно слово — верни одно слово."}, 
+                {"role": "user", "content": text}
+            ],
+            temperature=0.0
         )
         candidate_text = struct_resp.choices[0].message.content.strip()
         

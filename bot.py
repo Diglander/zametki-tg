@@ -32,8 +32,7 @@ async def start_cmd(message: types.Message):
         "⏰ Ставить таймеры: 'напомни завтра в 15:00 купить хлеб'.\n"
         "🔄 Повторять: 'напоминай пить воду каждые 3 часа' или 'потянуться через 10 секунд 3 раза'.\n"
         "📋 Показывать таймеры: 'какие есть таймеры'.\n"
-        "🗑 Удалять: 'удали заметку про...' или 'удали все заметки'.\n\n"
-        "Просто общайся со мной как с живым человеком!"
+        "🗑 Удалять: 'удали заметку про...' или 'удали все заметки'."
     )
     await message.answer(greeting)
 
@@ -99,7 +98,13 @@ async def process_text_via_api(message: types.Message, text: str):
                         await message.answer(f"⏰ Напоминание установлено на {dt_str}!{rec}{rep}\nТекст: {data.get('note', {}).get('text')}")
                     elif intent == "DELETE":
                         if data.get("success"):
-                            await message.answer(f"🗑 Заметка удалена. Оригинал:\n\n{data.get('deleted_text')}")
+                            texts = data.get("deleted_texts", [])
+                            # Для обратной совместимости, если вдруг вернется старый формат
+                            if not texts and data.get("deleted_text"):
+                                texts = [data.get("deleted_text")]
+                            texts_str = "\n\n".join([f"- {t}" for t in texts])
+                            header = "Заметка удалена" if len(texts) == 1 else f"Удалено записей: {len(texts)}"
+                            await message.answer(f"🗑 {header}. Оригиналы:\n\n{texts_str}")
                         else:
                             await message.answer("🤷‍♂️ Не нашел подходящую заметку для удаления.")
                     elif intent == "DELETE_ALL":

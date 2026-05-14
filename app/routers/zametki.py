@@ -60,10 +60,11 @@ async def process_text(
     "intent": "SEARCH" | "LIST_ALL" | "REMINDER" | "LIST_REMINDERS" | "LIST_TAGS" | "DELETE" | "DELETE_ALL" | "NOTE",
     "query": "СУТЬ того, что нужно найти или удалить (например, 'купить хлеб' вместо 'удали таймер про хлеб')",
     "is_reminder": "укажи true (boolean) если просят удалить/найти именно напоминание или таймер, иначе false",
+    "delete_multiple": "укажи true (boolean) если просят удалить СРАЗУ НЕСКОЛЬКО или ВСЕ заметки по одной теме (например 'удали все про банан'), иначе false",
     "remind_at": "ISO 8601 время (только если REMINDER)",
     "recurrence": "интервал. ОБЯЗАТЕЛЬНО заполни, если просят цикл или 'через X N раз' (например, 'через 10 секунд' -> '10s'). Форматы: '10s', '5m', '3h', '1d', '1w' ИЛИ '0,2,4' (дни недели). Иначе null",
     "repetitions": "число повторений (например, 3), если указано, иначе null",
-    "text": "очищенный текст для сохранения (для NOTE или REMINDER, без слова 'напомни')"
+    "text": "исходный текст БЕЗ отсебятины. ЗАПРЕЩЕНО писать сочинения или додумывать факты. Сохрани оригинальный смысл и объем."
 }}"""
     try:
         response = await aclient.chat.completions.create(
@@ -123,29 +124,36 @@ async def process_text(
         is_reminder = parsed.get("is_reminder")
         if isinstance(is_reminder, str):
             is_reminder = is_reminder.lower() == 'true'
+        delete_multiple = parsed.get("delete_multiple")
+        if isinstance(delete_multiple, str):
+            delete_multiple = delete_multiple.lower() == 'true'
 
         stmt = select(Zametka).where(Zametka.tg_chat_id == req.tg_chat_id)
         if is_reminder:
             stmt = stmt.where(Zametka.remind_at.isnot(None))
 
+        limit_count = 10 if delete_multiple else 1
+
         # 1. Пытаемся сначала найти точное вхождение текста (идеально для коротких таймеров)
-        exact_query = stmt.where(Zametka.text.ilike(f"%{q}%")).order_by(Zametka.created_at.desc()).limit(1)
+        exact_query = stmt.where(Zametka.text.ilike(f"%{q}%")).order_by(Zametka.created_at.desc()).limit(limit_count)
         res = await session.execute(exact_query)
-        note_to_delete = res.scalars().first()
+        notes_to_delete = res.scalars().all()
 
         # 2. Если по точному тексту не нашли, ищем по смыслу (вектору)
-        if not note_to_delete:
+        if not notes_to_delete:
             emb_resp = await emb_client.embeddings.create(input=q, model=os.getenv('EMBEDDING_MODEL', 'BAAI/bge-m3'))
             q_emb = emb_resp.data[0].embedding
-            vec_query = stmt.where(Zametka.embedding.isnot(None)).order_by(Zametka.embedding.l2_distance(q_emb)).limit(1)
+            vec_limit = 5 if delete_multiple else 1
+            vec_query = stmt.where(Zametka.embedding.isnot(None)).order_by(Zametka.embedding.l2_distance(q_emb)).limit(vec_limit)
             res = await session.execute(vec_query)
-            note_to_delete = res.scalars().first()
+            notes_to_delete = res.scalars().all()
 
-        if note_to_delete:
-            deleted_text = note_to_delete.text  # Строго возвращаем сырой оригинал
-            await session.delete(note_to_delete)
+        if notes_to_delete:
+            deleted_texts = [n.text for n in notes_to_delete]
+            for n in notes_to_delete:
+                await session.delete(n)
             await session.commit()
-            return {"intent": "DELETE", "success": True, "deleted_text": deleted_text}
+            return {"intent": "DELETE", "success": True, "deleted_texts": deleted_texts}
         return {"intent": "DELETE", "success": False}
 
     if intent == "DELETE_ALL":
